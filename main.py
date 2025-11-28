@@ -138,7 +138,7 @@ class WorkerThread:
         }
 
         try:
-            response = requests.post(API_URL, headers=headers, json=payload, timeout=180)
+            response = requests.post(API_URL, headers=headers, json=payload, timeout=1200)
             result = response.json()
 
             # Check for API error response (status 200 but error in body)
