@@ -65,5 +65,14 @@
     "@types/mime": "^3.0.4",
     "tsup": "^8.0.2",
     "typescript": "^5.3.3"
+  },
+  "pkg": {
+    "scripts": "dist/**/*.js",
+    "assets": [
+      "configs/**/*",
+      "package.json"
+    ],
+    "targets": ["node18-win-x64"],
+    "outputPath": "release/windows"
   }
 }

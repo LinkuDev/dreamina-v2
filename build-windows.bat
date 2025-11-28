@@ -23,7 +23,7 @@ if errorlevel 1 (
 
 echo.
 echo [2/4] Packaging Node.js to exe with pkg...
-call npx pkg dist/index.js -t node18-win-x64 -o release\windows\dreamina-server.exe
+call npx pkg dist/index.cjs -t node18-win-x64 -o release\windows\dreamina-server.exe -C
 if errorlevel 1 (
     echo ERROR: pkg failed!
     pause
@@ -45,6 +45,7 @@ if errorlevel 1 (
 
 :: Copy files to release
 copy "dist\DreaminaGUI.exe" "release\windows\"
+copy "package.json" "release\windows\"
 mkdir "release\windows\prompt"
 mkdir "release\windows\session"
 mkdir "release\windows\outputs"

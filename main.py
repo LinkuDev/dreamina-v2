@@ -30,8 +30,18 @@ ERROR_MESSAGES = {
 # Error codes that should trigger session switch
 SESSION_ERROR_CODES = [-2009, -2001, -2002, -2003, -1001]
 
-# Get the directory where this script is located
-SCRIPT_DIR = Path(__file__).parent.resolve()
+# Get the directory where the exe/script is located
+# When running as PyInstaller exe, use exe's directory
+# When running as script, use script's directory
+import sys
+
+if getattr(sys, 'frozen', False):
+    # Running as compiled exe
+    SCRIPT_DIR = Path(sys.executable).parent.resolve()
+else:
+    # Running as script
+    SCRIPT_DIR = Path(__file__).parent.resolve()
+
 PROMPT_FOLDER = SCRIPT_DIR / "prompt"
 SESSION_FOLDER = SCRIPT_DIR / "session"
 OUTPUT_FOLDER = SCRIPT_DIR / "outputs"

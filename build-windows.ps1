@@ -25,7 +25,7 @@ if ($LASTEXITCODE -ne 0) {
 
 # Step 2: Package with pkg
 Write-Host "`n[2/4] Packaging Node.js to exe..." -ForegroundColor Yellow
-npx pkg dist/index.js -t node18-win-x64 -o "$releaseDir\dreamina-server.exe"
+npx pkg dist/index.cjs -t node18-win-x64 -o "$releaseDir\dreamina-server.exe" -C
 if ($LASTEXITCODE -ne 0) {
     Write-Host "ERROR: pkg failed!" -ForegroundColor Red
     exit 1
@@ -45,6 +45,7 @@ if ($LASTEXITCODE -ne 0) {
 
 # Copy files
 Copy-Item "dist\DreaminaGUI.exe" "$releaseDir\"
+Copy-Item "package.json" "$releaseDir\"
 Copy-Item -Recurse "configs\*" "$releaseDir\configs\" -ErrorAction SilentlyContinue
 Copy-Item "prompt\*.txt" "$releaseDir\prompt\" -ErrorAction SilentlyContinue
 Copy-Item "session\*.txt" "$releaseDir\session\" -ErrorAction SilentlyContinue
