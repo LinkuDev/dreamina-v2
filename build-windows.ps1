@@ -25,7 +25,7 @@ if ($LASTEXITCODE -ne 0) {
 
 # Step 2: Package with pkg
 Write-Host "`n[2/4] Packaging Node.js to exe..." -ForegroundColor Yellow
-npx pkg dist/index.js -t node18-win-x64 -o "$releaseDir\dreamina-server.exe"
+npx pkg dist/index.js -t node20-win-x64 -o "$releaseDir\dreamina-server.exe"
 if ($LASTEXITCODE -ne 0) {
     Write-Host "ERROR: pkg failed!" -ForegroundColor Red
     exit 1
