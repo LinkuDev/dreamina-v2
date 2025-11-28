@@ -13,7 +13,8 @@ import re
 import hashlib
 
 # Constants
-API_URL = "http://localhost:5100/v1/images/generations"
+DEFAULT_API_HOST = "localhost:5100"
+API_PATH = "/v1/images/generations"
 RESOLUTION = "2k"
 MODELS = ["jimeng-3.0", "jimeng-4.0", "nanobanana", "nanobananapro"]
 RATIOS = ["1:1", "4:3", "3:4", "16:9", "9:16", "3:2", "2:3", "21:9"]
@@ -68,12 +69,14 @@ class WorkerThread:
     """Represents a worker thread for processing prompts."""
 
     def __init__(self, prompt_file: Path, session_file: Path, ratio_var: tk.StringVar,
-                 model_var: tk.StringVar, log_widget: scrolledtext.ScrolledText,
+                 model_var: tk.StringVar, api_host_var: tk.StringVar,
+                 log_widget: scrolledtext.ScrolledText,
                  status_label: ttk.Label, run_button: ttk.Button):
         self.prompt_file = prompt_file
         self.session_file = session_file
         self.ratio_var = ratio_var
         self.model_var = model_var
+        self.api_host_var = api_host_var
         self.log_widget = log_widget
         self.status_label = status_label
         self.run_button = run_button
@@ -148,7 +151,8 @@ class WorkerThread:
         }
 
         try:
-            response = requests.post(API_URL, headers=headers, json=payload, timeout=1200)
+            api_url = f"http://{self.api_host_var.get()}{API_PATH}"
+            response = requests.post(api_url, headers=headers, json=payload, timeout=1200)
             result = response.json()
 
             # Check for API error response (status 200 but error in body)
@@ -306,6 +310,7 @@ class JimengGUI:
         self.root.title("Dreamina Image Generator")
         self.root.geometry("1200x800")
         self.workers: list[WorkerThread] = []
+        self.api_host_var = tk.StringVar(value=DEFAULT_API_HOST)
 
         self.setup_folders()
         self.setup_ui()
@@ -346,6 +351,16 @@ class JimengGUI:
         # Main frame with padding
         main_frame = ttk.Frame(self.root, padding="10")
         main_frame.pack(fill=tk.BOTH, expand=True)
+
+        # API URL input at the top
+        api_frame = ttk.Frame(main_frame)
+        api_frame.pack(fill=tk.X, pady=(0, 10))
+
+        ttk.Label(api_frame, text="API Server:", font=('Helvetica', 10, 'bold')).pack(side=tk.LEFT, padx=(0, 5))
+        ttk.Label(api_frame, text="http://").pack(side=tk.LEFT)
+        api_entry = ttk.Entry(api_frame, textvariable=self.api_host_var, width=30)
+        api_entry.pack(side=tk.LEFT)
+        ttk.Label(api_frame, text=API_PATH, foreground="gray").pack(side=tk.LEFT, padx=(0, 10))
 
         # Header
         header_frame = ttk.Frame(main_frame)
@@ -482,7 +497,7 @@ class JimengGUI:
 
         # Create worker
         worker = WorkerThread(prompt_file, session_file, ratio_var, model_var,
-                             log_widget, status_label, run_btn)
+                             self.api_host_var, log_widget, status_label, run_btn)
         self.workers.append(worker)
 
         # Configure run button
