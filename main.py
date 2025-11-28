@@ -3,24 +3,32 @@
 GUI for Jimeng API - Image Generation Tool
 """
 
-import os
-import sys
-import json
 import threading
 import requests
 import tkinter as tk
 from tkinter import ttk, messagebox, scrolledtext
 from pathlib import Path
 from datetime import datetime
-from urllib.parse import urlparse, unquote
 import re
 import hashlib
 
 # Constants
 API_URL = "http://localhost:5100/v1/images/generations"
-MODEL = "jimeng-4.0"
 RESOLUTION = "2k"
+MODELS = ["jimeng-3.0", "jimeng-4.0", "nanobanana", "nanobananapro"]
 RATIOS = ["1:1", "4:3", "3:4", "16:9", "9:16", "3:2", "2:3", "21:9"]
+
+# Error messages mapping for friendly display
+ERROR_MESSAGES = {
+    -2009: "Hết credit! Session này đã hết điểm, chuyển sang session khác...",
+    -2001: "Session không hợp lệ hoặc đã hết hạn",
+    -2002: "Lỗi xác thực, session có thể đã bị khóa",
+    -2003: "Tài khoản bị giới hạn",
+    -1001: "Lỗi hệ thống, thử lại với session khác",
+}
+
+# Error codes that should trigger session switch
+SESSION_ERROR_CODES = [-2009, -2001, -2002, -2003, -1001]
 
 # Get the directory where this script is located
 SCRIPT_DIR = Path(__file__).parent.resolve()
@@ -29,29 +37,33 @@ SESSION_FOLDER = SCRIPT_DIR / "session"
 OUTPUT_FOLDER = SCRIPT_DIR / "outputs"
 
 
-def sanitize_folder_name(name: str, max_length: int = 50) -> str:
-    """Sanitize a string to be used as a folder name."""
+def sanitize_filename(name: str, max_length: int = 80) -> str:
+    """Sanitize a string to be used as a filename (replace spaces with dashes)."""
+    # Replace spaces with dashes
+    sanitized = name.replace(' ', '-')
     # Remove or replace invalid characters
-    sanitized = re.sub(r'[<>:"/\\|?*]', '_', name)
-    # Remove leading/trailing spaces and dots
-    sanitized = sanitized.strip(' .')
+    sanitized = re.sub(r'[<>:"/\\|?*]', '', sanitized)
+    # Remove multiple dashes
+    sanitized = re.sub(r'-+', '-', sanitized)
+    # Remove leading/trailing dashes and dots
+    sanitized = sanitized.strip('-.')
     # Truncate if too long
     if len(sanitized) > max_length:
-        # Keep first part and add hash for uniqueness
         hash_suffix = hashlib.md5(name.encode()).hexdigest()[:8]
         sanitized = sanitized[:max_length - 9] + '_' + hash_suffix
-    return sanitized if sanitized else "unnamed"
+    return sanitized.lower() if sanitized else "unnamed"
 
 
 class WorkerThread:
     """Represents a worker thread for processing prompts."""
 
     def __init__(self, prompt_file: Path, session_file: Path, ratio_var: tk.StringVar,
-                 log_widget: scrolledtext.ScrolledText, status_label: ttk.Label,
-                 run_button: ttk.Button):
+                 model_var: tk.StringVar, log_widget: scrolledtext.ScrolledText,
+                 status_label: ttk.Label, run_button: ttk.Button):
         self.prompt_file = prompt_file
         self.session_file = session_file
         self.ratio_var = ratio_var
+        self.model_var = model_var
         self.log_widget = log_widget
         self.status_label = status_label
         self.run_button = run_button
@@ -109,14 +121,17 @@ class WorkerThread:
             self.log(f"Error downloading image: {e}")
             return False
 
-    def call_api(self, prompt: str, session: str) -> dict | None:
-        """Call the image generation API."""
+    def call_api(self, prompt: str, session: str) -> tuple[dict | None, bool]:
+        """
+        Call the image generation API.
+        Returns: (result_dict, should_switch_session)
+        """
         headers = {
             "Content-Type": "application/json",
             "Authorization": f"Bearer sg-{session}"
         }
         payload = {
-            "model": MODEL,
+            "model": self.model_var.get(),
             "prompt": prompt,
             "ratio": self.ratio_var.get(),
             "resolution": RESOLUTION
@@ -124,56 +139,90 @@ class WorkerThread:
 
         try:
             response = requests.post(API_URL, headers=headers, json=payload, timeout=120)
-            response.raise_for_status()
-            return response.json()
+            result = response.json()
+
+            # Check for API error response (status 200 but error in body)
+            if "code" in result and result["code"] != 0:
+                error_code = result.get("code", 0)
+                # Use friendly message if available
+                friendly_msg = ERROR_MESSAGES.get(error_code)
+                if friendly_msg:
+                    self.log(f"⚠️ {friendly_msg}")
+                else:
+                    error_msg = result.get("message", "Unknown error")
+                    self.log(f"API Error [{error_code}]: {error_msg[:100]}")
+
+                # Check if this error should trigger session switch
+                should_switch = error_code in SESSION_ERROR_CODES or error_code < 0
+                return None, should_switch
+
+            # Check for valid data response
+            if "data" in result and result["data"]:
+                return result, False
+
+            # Empty or invalid response
+            self.log(f"Invalid API response: {str(result)[:100]}")
+            return None, True
+
         except requests.exceptions.HTTPError as e:
-            self.log(f"API HTTP Error: {e.response.status_code} - {e.response.text[:200]}")
-            return None
+            self.log(f"HTTP Error: {e.response.status_code}")
+            return None, True
+        except requests.exceptions.JSONDecodeError as e:
+            self.log(f"JSON Decode Error: {e}")
+            return None, True
         except Exception as e:
             self.log(f"API Error: {e}")
-            return None
+            return None, True
 
     def process_prompt(self, prompt: str, prompt_index: int) -> bool:
         """Process a single prompt, trying different sessions on failure."""
-        prompt_folder_name = sanitize_folder_name(prompt)
-        output_dir = OUTPUT_FOLDER / self.prompt_file.stem / prompt_folder_name
+        # Create filename from prompt: "a man is drinking beer" -> "a-man-is-drinking-beer"
+        base_filename = sanitize_filename(prompt)
 
-        while self.running:
-            session = self.sessions[self.current_session_index % len(self.sessions)]
-            self.log(f"Trying session {self.current_session_index + 1}/{len(self.sessions)}")
+        tried_sessions = 0
 
-            result = self.call_api(prompt, session)
+        while self.running and tried_sessions < len(self.sessions):
+            session = self.sessions[self.current_session_index]
+            self.log(f"Using session [{self.current_session_index + 1}/{len(self.sessions)}]: {session[:20]}...")
 
-            if result and "data" in result:
+            result, should_switch = self.call_api(prompt, session)
+
+            if result is not None and "data" in result and result["data"]:
                 # Success - download images
-                self.log(f"Got {len(result['data'])} images")
+                self.log(f"✅ Thành công! Nhận được {len(result['data'])} ảnh")
+                OUTPUT_FOLDER.mkdir(parents=True, exist_ok=True)
+
                 for i, item in enumerate(result['data']):
                     url = item.get('url')
                     if url:
-                        # Extract file extension from URL
-                        parsed = urlparse(url)
-                        path_part = parsed.path
                         ext = '.jpeg'
                         if 'format=' in url:
                             ext = url.split('format=')[-1].split('&')[0]
                             if not ext.startswith('.'):
                                 ext = '.' + ext
 
-                        filename = f"image_{i+1}{ext}"
-                        save_path = output_dir / filename
+                        # Save as: outputs/a-man-is-drinking-beer_1.jpeg
+                        filename = f"{base_filename}_{i+1}{ext}"
+                        save_path = OUTPUT_FOLDER / filename
 
                         if self.download_image(url, save_path):
-                            self.log(f"Saved: {save_path.name}")
+                            self.log(f"💾 Đã lưu: {filename}")
                         else:
-                            self.log(f"Failed to save: {filename}")
+                            self.log(f"❌ Lưu thất bại: {filename}")
                 return True
+
+            if should_switch:
+                # Switch to next session
+                self.current_session_index = (self.current_session_index + 1) % len(self.sessions)
+                tried_sessions += 1
+
+                if tried_sessions < len(self.sessions):
+                    self.log(f"Switching to next session...")
+                else:
+                    self.log(f"All {len(self.sessions)} sessions exhausted for this prompt!")
             else:
-                # Failed - try next session
-                self.current_session_index += 1
-                if self.current_session_index >= len(self.sessions):
-                    self.log("All sessions exhausted!")
-                    self.current_session_index = 0  # Reset for next prompt
-                    return False
+                # Other error, don't switch session
+                return False
 
         return False
 
@@ -389,6 +438,13 @@ class JimengGUI:
         ctrl_frame = ttk.Frame(top_frame)
         ctrl_frame.pack(side=tk.RIGHT)
 
+        # Model dropdown
+        ttk.Label(ctrl_frame, text="Model:").pack(side=tk.LEFT, padx=(0, 5))
+        model_var = tk.StringVar(value=MODELS[1])  # Default jimeng-4.0
+        model_combo = ttk.Combobox(ctrl_frame, textvariable=model_var, values=MODELS,
+                                    width=14, state="readonly")
+        model_combo.pack(side=tk.LEFT, padx=(0, 10))
+
         # Ratio dropdown
         ttk.Label(ctrl_frame, text="Ratio:").pack(side=tk.LEFT, padx=(0, 5))
         ratio_var = tk.StringVar(value=RATIOS[0])
@@ -413,7 +469,7 @@ class JimengGUI:
         log_widget.pack(fill=tk.X)
 
         # Create worker
-        worker = WorkerThread(prompt_file, session_file, ratio_var,
+        worker = WorkerThread(prompt_file, session_file, ratio_var, model_var,
                              log_widget, status_label, run_btn)
         self.workers.append(worker)
 
