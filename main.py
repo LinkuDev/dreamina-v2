@@ -138,7 +138,7 @@ class WorkerThread:
         }
 
         try:
-            response = requests.post(API_URL, headers=headers, json=payload, timeout=120)
+            response = requests.post(API_URL, headers=headers, json=payload, timeout=180)
             result = response.json()
 
             # Check for API error response (status 200 but error in body)
@@ -178,6 +178,8 @@ class WorkerThread:
         """Process a single prompt, trying different sessions on failure."""
         # Create filename from prompt: "a man is drinking beer" -> "a-man-is-drinking-beer"
         base_filename = sanitize_filename(prompt)
+        # Output folder: outputs/<prompt_file_name>/
+        output_dir = OUTPUT_FOLDER / self.prompt_file.stem
 
         tried_sessions = 0
 
@@ -190,7 +192,7 @@ class WorkerThread:
             if result is not None and "data" in result and result["data"]:
                 # Success - download images
                 self.log(f"✅ Thành công! Nhận được {len(result['data'])} ảnh")
-                OUTPUT_FOLDER.mkdir(parents=True, exist_ok=True)
+                output_dir.mkdir(parents=True, exist_ok=True)
 
                 for i, item in enumerate(result['data']):
                     url = item.get('url')
@@ -201,9 +203,9 @@ class WorkerThread:
                             if not ext.startswith('.'):
                                 ext = '.' + ext
 
-                        # Save as: outputs/a-man-is-drinking-beer_1.jpeg
+                        # Save as: outputs/<prompt_file_name>/a-man-is-drinking-beer_1.jpeg
                         filename = f"{base_filename}_{i+1}{ext}"
-                        save_path = OUTPUT_FOLDER / filename
+                        save_path = output_dir / filename
 
                         if self.download_image(url, save_path):
                             self.log(f"💾 Đã lưu: {filename}")
